@@ -1,4 +1,5 @@
 #include "redismodule.h"
+#include <limits.h>
 const char keys[] = "LOGGER.KEYS";
 const char values[] = "LOGGER.VALUES";
 const char timestamps[] = "LOGGER.TIMESTAMPS";
@@ -28,11 +29,19 @@ int LoggerPubCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     return REDISMODULE_OK;
 }
 /**
- * LOGGER.HISTORY 
+ * LOGGER.HISTORY [<timestamp_from> [<timestamp_to>]]
  * */
 int LoggerHistoryCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
-    if (argc != 1) {
+    if (argc != 1 && argc != 2 && argc != 3) {
         return RedisModule_WrongArity(ctx);
+    }
+    long long timestamp_from = LLONG_MIN;
+    long long timestamp_to = LLONG_MAX;
+    if(argc == 2) {
+        RedisModule_StringToLongLong(argv[1],&timestamp_from);
+    }
+    if(argc == 3) {
+        RedisModule_StringToLongLong(argv[2],&timestamp_to);
     }
 
     RedisModule_AutoMemory(ctx);
@@ -45,15 +54,24 @@ int LoggerHistoryCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc
     RedisModuleCallReply *rep_values = RedisModule_Call(ctx,"LRANGE","sll", rvalues,(long long)0,(long long)-1);
     RedisModuleCallReply *rep_timestamps = RedisModule_Call(ctx,"LRANGE","sll", rtimestamps,(long long)0,(long long)-1);
     size_t total = RedisModule_CallReplyLength(rep_keys);
-    RedisModule_ReplyWithArray(ctx, 3 * total);
+    size_t items = 0;
+    RedisModule_ReplyWithArray(ctx, REDISMODULE_POSTPONED_ARRAY_LEN);
     for (size_t i = 0; i < total; i++) {
-        RedisModuleCallReply *key = RedisModule_CallReplyArrayElement(rep_keys,i);
-        RedisModuleCallReply *value = RedisModule_CallReplyArrayElement(rep_values,i);
-        RedisModuleCallReply *timestamp = RedisModule_CallReplyArrayElement(rep_timestamps,i);
-        RedisModule_ReplyWithCallReply(ctx,key);
-        RedisModule_ReplyWithCallReply(ctx,value);
-        RedisModule_ReplyWithCallReply(ctx,timestamp);
+        RedisModuleCallReply *rtimestamp = RedisModule_CallReplyArrayElement(rep_timestamps,i);
+        RedisModuleString *timestamp_str = RedisModule_CreateStringFromCallReply(rtimestamp);
+        long long timestamp;
+        RedisModule_StringToLongLong(timestamp_str, &timestamp);
+        if(timestamp >= timestamp_from && timestamp <= timestamp_to) {
+            RedisModuleCallReply *rkey = RedisModule_CallReplyArrayElement(rep_keys,i);
+            RedisModuleCallReply *rvalue = RedisModule_CallReplyArrayElement(rep_values,i);
+            RedisModule_ReplyWithCallReply(ctx,rkey);
+            RedisModule_ReplyWithCallReply(ctx,rvalue);
+            RedisModule_ReplyWithCallReply(ctx,rtimestamp);
+            items += 3;
+        }
     }
+    RedisModule_ReplySetArrayLength(ctx, items);
+
 
     return REDISMODULE_OK;
 }
