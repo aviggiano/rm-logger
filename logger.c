@@ -29,6 +29,23 @@ int LoggerPubCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     return REDISMODULE_OK;
 }
 /**
+ * LOGGER.IDENTIFY <identity>
+ * */
+int LoggerIdentifyCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
+    if (argc != 2) {
+        return RedisModule_WrongArity(ctx);
+    }
+    RedisModule_AutoMemory(ctx);
+
+    RedisModuleString *rclients = RedisModule_CreateString(ctx, clients, sizeof(clients)-1);
+    RedisModuleString *rclient_id = RedisModule_CreateStringFromLongLong(ctx, (long long) RedisModule_GetClientId(ctx));
+    RedisModuleCallReply *rep = RedisModule_Call(ctx, "HSET", "sss", rclients, rclient_id, argv[1]);
+
+    RedisModule_ReplyWithCallReply(ctx, rep);
+
+    return REDISMODULE_OK;
+}
+/**
  * LOGGER.HISTORY [<timestamp_from> [<timestamp_to>]]
  * */
 int LoggerHistoryCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
@@ -88,6 +105,7 @@ void LoggerConnectionCallback(RedisModuleCtx * ctx) {
     RedisModuleKey *key = RedisModule_OpenKey(ctx, rclients, REDISMODULE_READ|REDISMODULE_WRITE);
     RedisModule_HashSet(key, REDISMODULE_HASH_NONE, rclient_id, runknown, NULL);
     RedisModule_CloseKey(key);
+    
 }
 void LoggerDisconnectionCallback(RedisModuleCtx * ctx) {
     RedisModule_AutoMemory(ctx); /* Use automatic memory management. */
@@ -117,6 +135,9 @@ int RedisModule_OnLoad(RedisModuleCtx *ctx) {
 
     // register our command
     if (RedisModule_CreateCommand(ctx, "LOGGER.PUB", LoggerPubCommand, "write pubsub", 1, 1, 1) == REDISMODULE_ERR) {
+        return REDISMODULE_ERR;
+    }
+    if (RedisModule_CreateCommand(ctx, "LOGGER.IDENTIFY", LoggerIdentifyCommand, "write", 1, 1, 1) == REDISMODULE_ERR) {
         return REDISMODULE_ERR;
     }
     if (RedisModule_CreateCommand(ctx, "LOGGER.HISTORY", LoggerHistoryCommand, "readonly", 1, 1, 1) == REDISMODULE_ERR) {
