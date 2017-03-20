@@ -3,7 +3,8 @@
 const char keys[] = "LOGGER.KEYS";
 const char values[] = "LOGGER.VALUES";
 const char timestamps[] = "LOGGER.TIMESTAMPS";
-const char heartbeat[] = "LOGGER.HEARTBEAT";
+const char clients[] = "LOGGER.CLIENTS";
+const char unknown[] = "LOGGER.UNKNOWN";
 /**
  * LOGGER.PUB <key> <value>
  * */
@@ -21,7 +22,6 @@ int LoggerPubCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
     RedisModuleCallReply *rep2 = RedisModule_Call(ctx, "LPUSH", "ss", rvalues, argv[2]);
     RedisModuleCallReply *rep3 = RedisModule_Call(ctx, "LPUSH", "sl", rtimestamps, RedisModule_Milliseconds());
 
-
     RedisModuleCallReply *rep4 = RedisModule_Call(ctx, "PUBLISH", "ss", argv[1], argv[2]);
 
     RedisModule_ReplyWithCallReply(ctx, rep4);
@@ -32,7 +32,7 @@ int LoggerPubCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
  * LOGGER.HISTORY [<timestamp_from> [<timestamp_to>]]
  * */
 int LoggerHistoryCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc) {
-    if (argc != 1 && argc != 2 && argc != 3) {
+    if (argc > 3) {
         return RedisModule_WrongArity(ctx);
     }
     long long timestamp_from = LLONG_MIN;
@@ -75,14 +75,47 @@ int LoggerHistoryCommand(RedisModuleCtx *ctx, RedisModuleString **argv, int argc
 
     return REDISMODULE_OK;
 }
-int RedisModule_OnLoad(RedisModuleCtx *ctx) {
+void LoggerConnectionCallback(RedisModuleCtx * ctx) {
+    RedisModule_AutoMemory(ctx); /* Use automatic memory management. */
 
-    // Register the module itself – it’s called example and has an API version of 1
+    unsigned long long client_id = RedisModule_GetClientId(ctx);
+    RedisModule_Log(ctx, "notice", "Client id %llu connected", client_id);
+
+    RedisModuleString *rclient_id = RedisModule_CreateStringFromLongLong(ctx, (long long) client_id);
+    RedisModuleString *runknown = RedisModule_CreateString(ctx, unknown, sizeof(unknown)-1);
+    RedisModuleString *rclients = RedisModule_CreateString(ctx, clients, sizeof(clients)-1);
+
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, rclients, REDISMODULE_READ|REDISMODULE_WRITE);
+    RedisModule_HashSet(key, REDISMODULE_HASH_NONE, rclient_id, runknown, NULL);
+    RedisModule_CloseKey(key);
+}
+void LoggerDisconnectionCallback(RedisModuleCtx * ctx) {
+    RedisModule_AutoMemory(ctx); /* Use automatic memory management. */
+
+    unsigned long long client_id = RedisModule_GetClientId(ctx);
+    RedisModule_Log(ctx, "notice", "Client id %llu disconnected", client_id);
+
+    RedisModuleString *rclient_id = RedisModule_CreateStringFromLongLong(ctx, (long long) client_id);
+    RedisModuleString *rclients = RedisModule_CreateString(ctx, clients, sizeof(clients)-1);
+
+    RedisModule_SelectDb(ctx, 0);
+    RedisModuleKey *key = RedisModule_OpenKey(ctx, rclients, REDISMODULE_READ|REDISMODULE_WRITE);
+    RedisModule_HashSet(key, REDISMODULE_HASH_NONE, rclient_id, REDISMODULE_HASH_DELETE, NULL);
+    RedisModule_CloseKey(key);
+}
+int RedisModule_OnLoad(RedisModuleCtx *ctx) {
+    // Register the module itself
     if (RedisModule_Init(ctx, "LOGGER", 1, REDISMODULE_APIVER_1) == REDISMODULE_ERR) {
         return REDISMODULE_ERR;
     }
+    if (RedisModule_HookToConnection(ctx, LoggerConnectionCallback) == REDISMODULE_ERR) {
+        return REDISMODULE_ERR;
+    }
+    if (RedisModule_HookToDisconnection(ctx, LoggerDisconnectionCallback) == REDISMODULE_ERR) {
+        return REDISMODULE_ERR;
+    }
 
-    // register our command – it is a write command, with one key at argv[1]
+    // register our command
     if (RedisModule_CreateCommand(ctx, "LOGGER.PUB", LoggerPubCommand, "write pubsub", 1, 1, 1) == REDISMODULE_ERR) {
         return REDISMODULE_ERR;
     }
